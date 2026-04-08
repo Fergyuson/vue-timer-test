@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
 import { nowMs } from '@/shared/time'
+import { readJson, writeJson } from '@/shared/storage'
 
 export type TimerRecord = {
   id: string
@@ -9,6 +9,8 @@ export type TimerRecord = {
   durationMs: number
 }
 
+const STORAGE_KEY = 'timer_records_v1'
+
 function newId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return (crypto as Crypto).randomUUID()
@@ -16,34 +18,43 @@ function newId(): string {
   return `id_${nowMs()}_${Math.random().toString(16).slice(2)}`
 }
 
-export const useRecordsStore = defineStore(
-  'records',
-  () => {
-    const records = ref<TimerRecord[]>([])
+type PersistedRecords = {
+  records: TimerRecord[]
+}
 
-    function addRecord(payload: Omit<TimerRecord, 'id' | 'savedAtMs'>) {
-      records.value.unshift({
+export const useRecordsStore = defineStore('records', {
+  state: () => ({
+    records: [] as TimerRecord[],
+  }),
+
+  actions: {
+    hydrate() {
+      const data = readJson<PersistedRecords>(STORAGE_KEY)
+      if (!data || !Array.isArray(data.records)) return
+      this.records = data.records
+    },
+
+    save() {
+      writeJson<PersistedRecords>(STORAGE_KEY, { records: this.records })
+    },
+
+    addRecord(payload: Omit<TimerRecord, 'id' | 'savedAtMs'>) {
+      this.records.unshift({
         id: newId(),
         savedAtMs: nowMs(),
         ...payload,
       })
-    }
-
-    function remove(id: string) {
-      records.value = records.value.filter((r) => r.id !== id)
-    }
-
-    function clear() {
-      records.value = []
-    }
-
-    return { records, addRecord, remove, clear }
-  },
-  {
-    persist: {
-      key: 'timer_records_v1',
-      storage: localStorage,
-      pick: ['records'],
+      this.save()
     },
-  }
-)
+
+    remove(id: string) {
+      this.records = this.records.filter((r) => r.id !== id)
+      this.save()
+    },
+
+    clear() {
+      this.records = []
+      this.save()
+    },
+  },
+})q

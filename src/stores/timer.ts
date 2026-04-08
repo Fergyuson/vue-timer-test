@@ -1,85 +1,116 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
-import { nowMs, formatTime } from '@/shared/time'
+import { formatTime, nowMs } from '@/shared/time'
+import { readJson, writeJson } from '@/shared/storage'
 
-export const useTimerStore = defineStore(
-  'timer',
-  () => {
-    const running = ref(false)
-    const sessionStartedAtMs = ref<number | null>(null)
-    const lastStartAtMs = ref<number | null>(null)
-    const accumulatedMs = ref(0)
+const STORAGE_KEY = 'timer_session_v1'
 
-    // ВАЖНО: реактивное "текущее время", чтобы computed пересчитывались
-    const now = ref(nowMs())
+type PersistedTimer = {
+  running: boolean
+  sessionStartedAtMs: number | null
+  lastStartAtMs: number | null
+  accumulatedMs: number
+}
 
-    function setNow(value: number) {
-      now.value = value
-    }
+export const useTimerStore = defineStore('timer', {
+  state: () => ({
+    running: false,
+    sessionStartedAtMs: null as number | null,
+    lastStartAtMs: null as number | null,
+    accumulatedMs: 0,
 
-    const elapsedMs = computed(() => {
-      if (!running.value || lastStartAtMs.value === null) return accumulatedMs.value
-      return accumulatedMs.value + (now.value - lastStartAtMs.value)
-    })
+    now: nowMs(),
+  }),
 
-    const formattedTime = computed(() => formatTime(elapsedMs.value))
-
-    const canStart = computed(() => !running.value)
-    const canPause = computed(() => running.value)
-    const canStop = computed(() => elapsedMs.value > 0 || running.value)
-
-    function start() {
-      if (running.value) return
-      if (sessionStartedAtMs.value === null) sessionStartedAtMs.value = nowMs()
-      running.value = true
-      lastStartAtMs.value = nowMs()
-      setNow(nowMs())
-    }
-
-    function pause() {
-      if (!running.value || lastStartAtMs.value === null) return
-      const t = nowMs()
-      accumulatedMs.value += t - lastStartAtMs.value
-      running.value = false
-      lastStartAtMs.value = null
-      setNow(t)
-    }
-
-    function stop() {
-      if (running.value) pause()
-    }
-
-    function clearSession() {
-      running.value = false
-      sessionStartedAtMs.value = null
-      lastStartAtMs.value = null
-      accumulatedMs.value = 0
-      setNow(nowMs())
-    }
-
-    return {
-      running,
-      sessionStartedAtMs,
-      lastStartAtMs,
-      accumulatedMs,
-      now,
-      setNow,
-      elapsedMs,
-      formattedTime,
-      canStart,
-      canPause,
-      canStop,
-      start,
-      pause,
-      stop,
-      clearSession,
-    }
-  },
-  {
-    persist: {
-      key: 'timer_session_v1',
-      storage: localStorage,
-      pick: ['running', 'sessionStartedAtMs', 'lastStartAtMs', 'accumulatedMs'],
+  getters: {
+    elapsedMs(state): number {
+      if (!state.running || state.lastStartAtMs === null) return state.accumulatedMs
+      return state.accumulatedMs + (state.now - state.lastStartAtMs)
     },
-  }
-)
+
+    formattedTime(): string {
+      return formatTime(this.elapsedMs)
+    },
+
+    canStart(state): boolean {
+      return !state.running
+    },
+    canPause(state): boolean {
+      return state.running
+    },
+    canStop(): boolean {
+      return this.elapsedMs > 0 || this.running
+    },
+  },
+
+  actions: {
+    hydrate() {
+      const data = readJson<PersistedTimer>(STORAGE_KEY)
+      if (!data) return
+
+      if (typeof data.running !== 'boolean') return
+      if (data.sessionStartedAtMs !== null && typeof data.sessionStartedAtMs !== 'number') return
+      if (data.lastStartAtMs !== null && typeof data.lastStartAtMs !== 'number') return
+      if (typeof data.accumulatedMs !== 'number') return
+
+      this.running = data.running
+      this.sessionStartedAtMs = data.sessionStartedAtMs
+      this.lastStartAtMs = data.lastStartAtMs
+      this.accumulatedMs = data.accumulatedMs
+      this.now = nowMs()
+    },
+
+    save() {
+      const payload: PersistedTimer = {
+        running: this.running,
+        sessionStartedAtMs: this.sessionStartedAtMs,
+        lastStartAtMs: this.lastStartAtMs,
+        accumulatedMs: this.accumulatedMs,
+      }
+      writeJson(STORAGE_KEY, payload)
+    },
+
+    setNow(value: number) {
+      this.now = value
+    },
+
+    start() {
+      if (this.running) return
+
+      if (this.sessionStartedAtMs === null) {
+        this.sessionStartedAtMs = nowMs()
+      }
+
+      this.running = true
+      this.lastStartAtMs = nowMs()
+      this.now = nowMs()
+
+      this.save()
+    },
+
+    pause() {
+      if (!this.running || this.lastStartAtMs === null) return
+
+      const t = nowMs()
+      this.accumulatedMs += t - this.lastStartAtMs
+      this.running = false
+      this.lastStartAtMs = null
+      this.now = t
+
+      this.save()
+    },
+
+    stop() {
+      if (this.running) this.pause()
+    },
+
+    clearSession() {
+      this.running = false
+      this.sessionStartedAtMs = null
+      this.lastStartAtMs = null
+      this.accumulatedMs = 0
+      this.now = nowMs()
+
+      this.save()
+    },
+  },
+})
